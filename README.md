@@ -170,10 +170,6 @@ ERROR: サーボ接続失敗
 
 MIT License
 
-## 貢献
-
-プルリクエスト、イシューの報告を歓迎します。
-
 ## 関連リンク
 
 - [Feetech公式サイト](https://www.feetechrc.com/)
