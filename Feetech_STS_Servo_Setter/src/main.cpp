@@ -2,6 +2,7 @@
 
 // ESP32 STS サーボ制御 - SyncWrite機能付き完全版
 // Feetech STS サーボ公式プロトコル準拠 + 複数サーボ同期制御
+// 2025 Izumi Ninagawa
 
 // ピン定義
 #define ENPIN 33 // 半二重回路のENピン
@@ -33,11 +34,11 @@
 
 // レジスタアドレス定義
 #define REG_ID 5
-#define REG_TORQUE_ENABLE 24
+#define REG_TORQUE_ENABLE 40 // 修正: STS公式仕様では40
 #define REG_TARGET_POSITION 30
-#define REG_CURRENT_POSITION 36
-#define REG_VOLTAGE 42
-#define REG_MOVING 49
+#define REG_CURRENT_POSITION 56 // 修正: STS公式仕様では56
+#define REG_VOLTAGE 62          // 修正: STS公式仕様では62
+#define REG_MOVING 66           // 修正: STS公式仕様では66
 #define REG_LOCK 55
 #define UNLOCK_VALUE 0 // EEPROMロック解除値
 #define LOCK_VALUE 1   // EEPROMロック値
@@ -45,8 +46,6 @@
 byte buffer[MAX_DATA_LENGTH];
 
 // グローバル変数
-int operationMode = 1; // 1:標準, 2:手動, 3:ID管理, 4:診断, 5:連番設定
-bool autoDemo = false;
 byte targetServoId = 1; // コントロール対象のサーボID
 
 // 複数サーボ制御用データ構造
@@ -56,23 +55,6 @@ struct ServoData
   int position;
   int speed;
   int time;
-};
-
-// デモ用サーボ設定
-ServoData demoServos[] = {
-    {1, 512, 100, 1000},  // サーボID1: センター
-    {2, 1024, 100, 1000}, // サーボID2: 90度
-    {3, 2048, 100, 1000}  // サーボID3: 180度
-};
-const int numDemoServos = sizeof(demoServos) / sizeof(demoServos[0]);
-
-// 移動パターン
-int patternIndex = 0;
-const int numPatterns = 3;
-int movePatterns[numPatterns][3] = {
-    {200, 800, 1500},  // パターン1
-    {3000, 1000, 500}, // パターン2
-    {2048, 2048, 2048} // パターン3（センター）
 };
 
 // デバッグ用表示関数
@@ -874,277 +856,20 @@ void sts_scanServos(byte startId = 1, byte endId = 10)
   Serial.print("/");
   Serial.print(endId - startId + 1);
   Serial.println("台のサーボが見つかりました");
-}
-
-// 起動時機能選択メニュー
-void showStartupMenu()
-{
-  Serial.println("╔════════════════════════════════════════════════════════════╗");
-  Serial.println("║                    起動時機能選択                          ║");
-  Serial.println("╠════════════════════════════════════════════════════════════╣");
-  Serial.println("║ [1]  標準モード - デモ付き自動実行                        ║");
-  Serial.println("║ [2]  手動制御モード - コマンド入力のみ                    ║");
-  Serial.println("║ [3]   サーボID管理モード - ID読取・変更                    ║");
-  Serial.println("║ [4]   システム診断モード - 詳細チェック                    ║");
-  Serial.println("║ [5]   連番ID設定モード - 複数サーボ一括設定                ║");
-  Serial.println("╚════════════════════════════════════════════════════════════╝");
   Serial.println();
-  Serial.println("番号を入力してください (1-5):");
 }
 
-int waitForMenuSelection()
+// コマンド一覧表示
+void showCommandList()
 {
-  while (!Serial.available())
-  {
-    delay(100);
-  }
-
-  int selection = Serial.parseInt();
-  while (Serial.available())
-  {
-    Serial.read(); // バッファクリア
-  }
-
-  if (selection < 1 || selection > 5)
-  {
-    Serial.println("ERROR:  無効な選択です。1-5を入力してください。");
-    return waitForMenuSelection();
-  }
-
-  return selection;
-}
-
-// ID管理モード専用機能
-void runIdManagementMode()
-{
-  Serial.println("╔══════════════════════════════════════════════════════════╗");
-  Serial.println("║                サーボID管理モード                        ║");
-  Serial.println("╚══════════════════════════════════════════════════════════╝");
-
-  while (true)
-  {
-    Serial.println("\nID管理メニュー:");
-    Serial.println("[1]   ID範囲スキャン - 指定範囲のサーボを検索");
-    Serial.println("[2]   全範囲スキャン - ID 1-253の全スキャン");
-    Serial.println("[3]   ID読み取り - 指定IDのサーボ情報表示");
-    Serial.println("[4]   ID変更 - 個別ID変更");
-    Serial.println("[5]   工場出荷時リセット - ID=1に戻す");
-    Serial.println("[6]   メインメニューに戻る");
-    Serial.println("\n選択してください (1-6):");
-
-    while (!Serial.available())
-      delay(100);
-    int choice = Serial.parseInt();
-    while (Serial.available())
-      Serial.read();
-
-    switch (choice)
-    {
-    case 1:
-    {
-      Serial.println("開始ID (1-253):");
-      while (!Serial.available())
-        delay(100);
-      int startId = Serial.parseInt();
-      while (Serial.available())
-        Serial.read();
-
-      Serial.println("終了ID (1-253):");
-      while (!Serial.available())
-        delay(100);
-      int endId = Serial.parseInt();
-      while (Serial.available())
-        Serial.read();
-
-      if (startId >= 1 && startId <= 253 && endId >= 1 && endId <= 253 && startId <= endId)
-      {
-        sts_scanServos(startId, endId);
-      }
-      else
-      {
-        Serial.println("ERROR:  無効な範囲です");
-      }
-      break;
-    }
-
-    case 2:
-      Serial.println("[CHECK]全範囲スキャン開始...");
-      sts_scanServos(1, 253);
-      break;
-
-    case 3:
-    {
-      Serial.println("読み取りたいID (1-253):");
-      while (!Serial.available())
-        delay(100);
-      int targetId = Serial.parseInt();
-      while (Serial.available())
-        Serial.read();
-
-      if (targetId >= 1 && targetId <= 253)
-      {
-        Serial.print("[INFO] ID ");
-        Serial.print(targetId);
-        Serial.println(" の詳細情報:");
-
-        int readId, pos, volt, moving;
-        if (sts_readId(targetId, &readId))
-        {
-          delay(200);
-          sts_readPosition(targetId, &pos);
-          delay(200);
-          sts_readVoltage(targetId, &volt);
-          delay(200);
-          sts_readMoving(targetId, &moving);
-        }
-        else
-        {
-          Serial.println("ERROR:  サーボが応答しません");
-        }
-      }
-      else
-      {
-        Serial.println("ERROR:  無効なIDです");
-      }
-      break;
-    }
-
-    case 4:
-    {
-      Serial.println("現在のID (1-253):");
-      while (!Serial.available())
-        delay(100);
-      int currentId = Serial.parseInt();
-      while (Serial.available())
-        Serial.read();
-
-      Serial.println("新しいID (1-253):");
-      while (!Serial.available())
-        delay(100);
-      int newId = Serial.parseInt();
-      while (Serial.available())
-        Serial.read();
-
-      Serial.print("確認: ID ");
-      Serial.print(currentId);
-      Serial.print(" → ID ");
-      Serial.print(newId);
-      Serial.println(" に変更しますか? (y/n)");
-
-      while (!Serial.available())
-        delay(100);
-      char confirm = Serial.read();
-      while (Serial.available())
-        Serial.read();
-
-      if (confirm == 'y' || confirm == 'Y')
-      {
-        sts_changeId(currentId, newId);
-      }
-      else
-      {
-        Serial.println("ERROR:  キャンセルされました");
-      }
-      break;
-    }
-
-    case 5:
-    {
-      Serial.println("リセットするサーボのID (1-253):");
-      while (!Serial.available())
-        delay(100);
-      int currentId = Serial.parseInt();
-      while (Serial.available())
-        Serial.read();
-
-      Serial.print("確認: ID ");
-      Serial.print(currentId);
-      Serial.println(" を ID 1 にリセットしますか? (y/n)");
-
-      while (!Serial.available())
-        delay(100);
-      char confirm = Serial.read();
-      while (Serial.available())
-        Serial.read();
-
-      if (confirm == 'y' || confirm == 'Y')
-      {
-        sts_resetToFactory(currentId);
-      }
-      else
-      {
-        Serial.println("ERROR:  キャンセルされました");
-      }
-      break;
-    }
-
-    case 6:
-      Serial.println("🔙 メインメニューに戻ります");
-      return;
-
-    default:
-      Serial.println("ERROR:  無効な選択です");
-      break;
-    }
-  }
-}
-
-// システム診断モード
-void runSystemDiagnosticMode()
-{
-  Serial.println("╔══════════════════════════════════════════════════════════╗");
-  Serial.println("║                システム診断モード                        ║");
-  Serial.println("╚══════════════════════════════════════════════════════════╝");
-
-  Serial.println("[HW_CHECK] ハードウェア設定確認:");
-  Serial.print("  ENピン(");
-  Serial.print(ENPIN);
-  Serial.print("): ");
-  Serial.println(digitalRead(ENPIN) ? "HIGH(送信)" : "LOW(受信)");
-  Serial.print("  TXピン: ");
-  Serial.println(TXD1);
-  Serial.print("  RXピン: ");
-  Serial.println(RXD1);
-  Serial.println("  UART速度: 1Mbps");
-
-  Serial.println("\n[CHECK]接続サーボスキャン (ID 1-10):");
-  sts_scanServos(1, 10);
-
-  Serial.print("\n[COMM_TEST] 通信テスト (ID");
+  Serial.println("=== コマンド一覧 ===");
+  Serial.print(" [p] Ping テスト (現在のターゲット: ID");
   Serial.print(targetServoId);
-  Serial.println("):");
-  int successCount = 0;
-  for (int i = 0; i < 5; i++)
-  {
-    Serial.print("Test ");
-    Serial.print(i + 1);
-    Serial.print("/5: ");
-    if (sts_ping(targetServoId))
-    {
-      successCount++;
-    }
-    delay(200);
-  }
-  Serial.print("成功率: ");
-  Serial.print((successCount * 100) / 5);
-  Serial.println("%");
-
-  if (successCount > 0)
-  {
-    Serial.print("\n[DETAIL_INFO] 詳細情報取得 (ID");
-    Serial.print(targetServoId);
-    Serial.println("):");
-    int id, pos, volt, moving;
-    sts_readId(targetServoId, &id);
-    delay(200);
-    sts_readPosition(targetServoId, &pos);
-    delay(200);
-    sts_readVoltage(targetServoId, &volt);
-    delay(200);
-    sts_readMoving(targetServoId, &moving);
-  }
-
-  Serial.println("\nOK: 診断完了。手動コマンドモードに移行します。");
+  Serial.println(" )            [z] ターゲットサーボID変更");
+  Serial.println(" [r] 位置READ      [v] 電圧READ    [m] 移動状態確認  [c] センター移動  [s] 全STATUS確認");
+  Serial.println(" [a] 複数位置READ  [n] サーボSCAN  [e] 全トルク有効  [d] 全トルク無効  [y] SyncWriteテスト");
+  Serial.println(" [j] ID読み取り    [i] ID変更      [f] 工場リセット  [b] 連番ID設定");
+  Serial.println(" [t] 通信テスト    [h] ヘルプ表示");
 }
 
 // シリアルコマンド処理（SyncWrite機能追加）
@@ -1174,6 +899,7 @@ void handleSerialCommand()
       {
         Serial.println("ERROR:  接続失敗");
       }
+      break;
 
     case 'i':
     case 'I':
@@ -1423,32 +1149,7 @@ void handleSerialCommand()
 
     case 'h':
     case 'H':
-      Serial.println("=== コマンド一覧 ===");
-      Serial.println("基本制御:");
-      Serial.print("  p - Ping テスト (現在のターゲット: ID");
-      Serial.print(targetServoId);
-      Serial.println(")");
-      Serial.println("  r - 位置読み取り");
-      Serial.println("  v - 電圧読み取り");
-      Serial.println("  m - 移動状態確認");
-      Serial.println("  c - センター移動");
-      Serial.println("  s - 全ステータス確認");
-      Serial.println("複数サーボ制御:");
-      Serial.println("  y - SyncWrite テスト");
-      Serial.println("  a - 複数位置読み取り");
-      Serial.println("  n - サーボスキャン");
-      Serial.println("  e - 全トルク有効化");
-      Serial.println("  d - 全トルク無効化");
-      Serial.println("ターゲット設定:");
-      Serial.println("  z - ターゲットサーボID変更");
-      Serial.println("その他:");
-      Serial.println("  t - 通信テスト");
-      Serial.println("  h - ヘルプ表示");
-      Serial.println("ID管理:");
-      Serial.println("  j - ID読み取り");
-      Serial.println("  i - ID変更");
-      Serial.println("  f - 工場出荷時リセット");
-      Serial.println("  b - 連番ID設定");
+      showCommandList();
       break;
 
     case 'z':
@@ -1510,7 +1211,7 @@ void handleSerialCommand()
     }
 
     default:
-      Serial.println("[?]  不明コマンド。'h'でヘルプ");
+      showCommandList();
       break;
     }
     Serial.println();
@@ -1539,13 +1240,11 @@ void setup()
   delay(500);
 
   // スタートアップ
-  Serial.println("╔══════════════════════════════════════════════════════════╗");
-  Serial.println("║          ESP32 STS サーボ制御システム v4.0               ║");
-  Serial.println("║          起動時機能選択・ID管理機能付き完全版             ║");
-  Serial.println("╚══════════════════════════════════════════════════════════╝");
   Serial.println();
-
-  Serial.print("ENピン状態: ");
+  Serial.println("╔══════════════════════════════════════════════════════════╗");
+  Serial.println("║          Feetech STS サーボ設定システム v0.1             ║");
+  Serial.println("╚══════════════════════════════════════════════════════════╝");
+  Serial.print("ENピン状態: 現在");
   Serial.println(digitalRead(ENPIN) ? "HIGH(送信)" : "LOW(受信)");
   Serial.print("UART設定: 1Mbps, 8N1, TX=");
   Serial.print(TXD1);
@@ -1553,144 +1252,43 @@ void setup()
   Serial.println(RXD1);
   Serial.println();
 
-  // 起動時機能選択
-  showStartupMenu();
-  operationMode = waitForMenuSelection();
+  // 手動制御モードで起動
 
-  Serial.print("選択されたモード: ");
-  switch (operationMode)
-  {
-  case 1:
-    Serial.println("[1]  標準モード");
-    break;
-  case 2:
-    Serial.println("[2]  手動制御モード");
-    break;
-  case 3:
-    Serial.println("[3]  サーボID管理モード");
-    break;
-  case 4:
-    Serial.println("[4]  システム診断モード");
-    break;
-  case 5:
-    Serial.println("[5]  連番ID設定モード");
-    break;
-  }
-  Serial.println();
+  // 基本的な接続確認を実行
+  Serial.println("サーボ接続テスト...");
 
-  // モード別初期化
-  if (operationMode == 3)
+  bool connected = false;
+  for (int attempt = 1; attempt <= 3; attempt++)
   {
-    // ID管理モード
-    runIdManagementMode();
-    operationMode = 2; // ID管理完了後は手動モードに移行
+    Serial.print("試行 ");
+    Serial.print(attempt);
+    Serial.print("/3: ");
+    if (sts_ping(targetServoId))
+    {
+      connected = true;
+      break;
+    }
+    delay(500);
   }
-  else if (operationMode == 4)
+
+  if (connected)
   {
-    // システム診断モード
-    runSystemDiagnosticMode();
-    operationMode = 2; // 診断完了後は手動モードに移行
-  }
-  else if (operationMode == 5)
-  {
-    // 連番ID設定モード
-    Serial.println("╔══════════════════════════════════════════════════════════╗");
-    Serial.println("║              連番ID設定モード                            ║");
-    Serial.println("╚══════════════════════════════════════════════════════════╝");
-    sts_setBatchIds(1);
-    operationMode = 2; // 設定完了後は手動モードに移行
+    Serial.println("サーボ接続成功!");
   }
   else
   {
-    // 標準モード・手動モードの場合は基本的な接続確認を実行
-    Serial.println("[CHECK]サーボ接続テスト...");
-
-    bool connected = false;
-    for (int attempt = 1; attempt <= 3; attempt++)
-    {
-      Serial.print("試行 ");
-      Serial.print(attempt);
-      Serial.print("/3: ");
-      if (sts_ping(targetServoId))
-      {
-        connected = true;
-        break;
-      }
-      delay(500);
-    }
-
-    if (connected)
-    {
-      Serial.println("OK: サーボ接続成功!");
-
-      if (operationMode == 1)
-      {
-        // 標準モードの場合のみ詳細初期化
-        Serial.println("トルク有効化...");
-        sts_enableTorque(targetServoId, 1);
-        delay(300);
-
-        Serial.println("初期状態磺認...");
-        int pos, volt, moving;
-        if (sts_readPosition(targetServoId, &pos))
-        {
-          Serial.print("初期位置: ");
-          disp_dechex(pos);
-          Serial.print(" (");
-          Serial.print((pos * 360.0) / 4096.0, 1);
-          Serial.println("°)");
-        }
-        delay(300);
-
-        if (sts_readVoltage(targetServoId, &volt))
-        {
-          Serial.print("電源電圧: ");
-          Serial.print(volt / 10.0, 1);
-          Serial.println("V");
-        }
-        delay(300);
-
-        if (sts_readMoving(targetServoId, &moving))
-        {
-          Serial.print("移動状態: ");
-          Serial.println(moving == 0 ? "停止中" : "移動中");
-        }
-
-        Serial.println("\n[CHECK]複数サーボ確認...");
-        sts_scanServos(1, 3);
-
-        autoDemo = true; // 自動デモ有効化
-      }
-    }
-    else
-    {
-      Serial.println("ERROR:  サーボ接続失敗");
-      Serial.println();
-      Serial.println("トラブルシューティング:");
-      Serial.println("1. 配線確認 - EN(33), TX(27), RX(32), GND");
-      Serial.println("2. 電源確認 - 6-14V");
-      Serial.println("3. サーボID確認 - デフォルト=1");
-      Serial.println("4. ボーレート確認 - 1Mbps");
-      Serial.println();
-      Serial.println("[HINT] 手動テスト: p(Ping), n(スキャン), y(SyncWrite)");
-      operationMode = 2; // 接続失敗時は手動モードに移行
-    }
+    Serial.println("ERROR:  サーボ接続失敗");
+    Serial.println();
+    Serial.println("トラブルシューティング:");
+    Serial.println("1. 配線確認 - EN(33), TX(27), RX(32), GND");
+    Serial.println("2. 電源確認 - 6-14V");
+    Serial.println("3. サーボID確認 - デフォルト=1");
+    Serial.println("4. ボーレート確認 - 1Mbps");
+    Serial.println();
   }
 
-  Serial.println();
-  Serial.println("[START] 制御開始");
-  if (operationMode == 1)
-  {
-    Serial.println("[MEMO] 標準モード: SyncWrite自動デモ + 手動コマンド");
-  }
-  else
-  {
-    Serial.println("[MEMO] 手動制御モード: コマンド入力待機");
-  }
-  Serial.print("[TARGET] 現在のターゲットサーボ: ID");
-  Serial.println(targetServoId);
-  Serial.println("[HINT] 'h'でコマンド一覧表示");
-  Serial.println("════════════════════════════════════════════════════════════");
+  // コマンド一覧を表示
+  showCommandList();
   Serial.println();
 }
 
@@ -1698,61 +1296,6 @@ void loop()
 {
   // シリアルコマンド処理
   handleSerialCommand();
-
-  // 自動SyncWriteデモ（標準モードかつ自動デモ有効時のみ）
-  static unsigned long lastDemo = 0;
-  static bool demoEnabled = false;
-
-  if (autoDemo && operationMode == 1)
-  {
-    // 初回接続確認
-    if (!demoEnabled && millis() > 8000)
-    {
-      Serial.println("[CHECK]SyncWriteデモ開始前の接続確認...");
-      if (sts_ping(targetServoId))
-      {
-        demoEnabled = true;
-        Serial.println("OK: SyncWriteデモ開始");
-      }
-      else
-      {
-        Serial.println("ERROR:  接続失敗 - 手動コマンドのみ利用可能");
-        demoEnabled = false;
-      }
-    }
-
-    if (demoEnabled && millis() - lastDemo > 3000)
-    { // 3秒間隔
-      Serial.print("[SYNC] SyncWriteデモ パターン");
-      Serial.print(patternIndex + 1);
-      Serial.print("/");
-      Serial.print(numPatterns);
-      Serial.print(" ");
-
-      // 現在のパターンで複数サーボを同期制御
-      ServoData syncServos[3];
-      for (int i = 0; i < 3; i++)
-      {
-        syncServos[i].id = i + 1;
-        syncServos[i].position = movePatterns[patternIndex][i];
-        syncServos[i].speed = 80;
-        syncServos[i].time = 1500;
-      }
-
-      if (sts_syncWrite(syncServos, 3))
-      {
-        delay(2000); // 移動完了待ち
-
-        // 結果確認（修正版）
-        sts_verifySyncWrite(syncServos, 3);
-      }
-
-      patternIndex = (patternIndex + 1) % numPatterns;
-      lastDemo = millis();
-      Serial.println("[STOP]3秒待機...");
-      Serial.println("─────────────────────────────────────────────────────────");
-    }
-  }
 
   delay(100);
 }
